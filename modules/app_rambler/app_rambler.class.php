@@ -1,10 +1,17 @@
 <?php
+#[AllowDynamicProperties]
 class app_rambler extends module {
 	function __construct() {
 		$this->name="app_rambler";
 		$this->title="Модуль Рамблер";
 		$this->module_category="<#LANG_SECTION_APPLICATIONS#>";
 		$this->version="1.0 beta";
+		$this->id = isset($this->id) ? $this->id : '';
+		$this->view_mode = isset($this->view_mode) ? $this->view_mode : '';
+		$this->edit_mode = isset($this->edit_mode) ? $this->edit_mode : '';
+		$this->mode = isset($this->mode) ? $this->mode : '';
+		$this->tab = isset($this->tab) ? $this->tab : '';
+		$this->ajax = isset($this->ajax) ? $this->ajax : 0;
 		$this->checkInstalled();
 	}
 
@@ -58,7 +65,7 @@ class app_rambler extends module {
 		global $session;
 		$out=array();
 		
-		if ($this->action=='admin') {
+		if (isset($this->action) && $this->action=='admin') {
 			$this->admin($out);
 		} else {
 			$this->usual($out);
@@ -73,7 +80,7 @@ class app_rambler extends module {
 		$out['EDIT_MODE']=$this->edit_mode;
 		$out['ID']=$this->id;
 		$out['MODE']=$this->mode;
-		$out['ACTION']=$this->action;
+		$out['ACTION']=isset($this->action) ? $this->action : '';
 		$this->data=$out;
 		$p=new parser(DIR_TEMPLATES.$this->name."/".$this->name.".html", $this->data, $this);
 		$this->result=$p->result;
@@ -85,15 +92,21 @@ class app_rambler extends module {
     function admin(&$out) {
 		if(empty($this->view_mode)) {
 			//Выгружаем список добавленых городов и отдаем в шаблон
-			$out['CITY_ALL'] = SQLSelect('SELECT * FROM rambler_weather_city');
+			$out['CITY_ALL'] = SQLSelect("
+				SELECT c.*,
+					MAX(CASE WHEN v.TITLE = 'current_weather.icon' THEN v.VALUE ELSE '' END) AS CURRENT_WEATHER_ICON,
+					MAX(CASE WHEN v.TITLE = 'current_weather.temperature' THEN v.VALUE ELSE '' END) AS CURRENT_WEATHER_TEMPERATURE,
+					MAX(CASE WHEN v.TITLE = 'current_weather.temperature' THEN v.UPDATE ELSE '' END) AS CURRENT_WEATHER_UPDATE
+				FROM rambler_weather_city c
+				LEFT JOIN rambler_weather_value v
+					ON v.CITY_ID = c.ID
+					AND v.TITLE IN ('current_weather.icon', 'current_weather.temperature')
+				GROUP BY c.ID
+				ORDER BY c.ID
+			");
 			foreach($out['CITY_ALL'] as $key => $value) {
-				$data = SQLSelect("SELECT * FROM rambler_weather_value WHERE CITY_ID = '".$value['ID']."' AND (TITLE = 'current_weather.icon' OR TITLE = 'current_weather.temperature')");
-				foreach($data as $cityValueKey => $cityValueData) {
-					if($cityValueData['TITLE'] == 'current_weather.icon') $out['CITY_ALL'][$key]['CURRENT_WEATHER_ICON'] = $cityValueData['VALUE'];
-					if($cityValueData['TITLE'] == 'current_weather.temperature') {
-						$out['CITY_ALL'][$key]['CURRENT_WEATHER_TEMPERATURE'] = $cityValueData['VALUE'];
-						$out['CITY_ALL'][$key]['UPDATE'] = date('d.m.Y H:i', $cityValueData['UPDATE']);
-					}
+				if(!empty($value['CURRENT_WEATHER_UPDATE'])) {
+					$out['CITY_ALL'][$key]['UPDATE'] = date('d.m.Y H:i', $value['CURRENT_WEATHER_UPDATE']);
 				}
 			}
 		}
@@ -102,6 +115,9 @@ class app_rambler extends module {
 			//Действия после поиска и передачи города
 			$data = $this->callAPI('https://weather.rambler.ru/api/v3/map_towns/?url_path='.$this->id);
 			$data = json_decode($data, TRUE);
+			if (empty($data['current_town']['url_path']) || empty($data['current_town']['name'])) {
+				$this->redirect('?');
+			}
 			
 			$ifExist = SQLSelectOne("SELECT ID FROM rambler_weather_city WHERE URL_PATH = '".DBSafe($data['current_town']["url_path"])."'");
 			
@@ -121,10 +137,13 @@ class app_rambler extends module {
 		if($this->view_mode == 'loaddata' && !empty($this->id)) {
 			if(empty($this->mode)) $this->mode = 'current_weather';
 			//Действия при входе в город, тут выгружаем все значения
-			$city_info = SQLSelectOne('SELECT * FROM rambler_weather_city WHERE id = '.DBSafe($this->id).' ORDER BY ID');
+			$city_info = SQLSelectOne("SELECT * FROM rambler_weather_city WHERE ID = '".DBSafe($this->id)."'");
+			if (!$city_info || !is_array($city_info) || empty($city_info['ID'])) {
+				$this->redirect('?');
+			}
 			$out['CITY_TITLE'] = $city_info['TITLE'];
 			$out['CITY_URL_PATH'] = $city_info['URL_PATH'];
-			$arrayInDB = SQLSelect('SELECT * FROM rambler_weather_value WHERE CITY_ID = '.DBSafe($this->id).' ORDER BY ID');
+			$arrayInDB = SQLSelect("SELECT * FROM rambler_weather_value WHERE CITY_ID = '".DBSafe($this->id)."' AND TITLE LIKE '".DBSafe($this->mode).".%' ORDER BY ID");
 			$arrayReady = [];
 			$arrayOut = [];
 			
@@ -160,7 +179,7 @@ class app_rambler extends module {
 			
 			if(!$id || !$mode) $this->redirect('?');
 			
-			$skills = SQLSelect("SELECT * FROM `rambler_weather_value` WHERE CITY_ID = '" . DBSafe($id) . "' AND TITLE LIKE '".$mode.".%' ORDER BY ID");
+			$skills = SQLSelect("SELECT * FROM `rambler_weather_value` WHERE CITY_ID = '" . DBSafe($id) . "' AND TITLE LIKE '".DBSafe($mode).".%' ORDER BY ID");
 			
 			$total = count($skills);
 
@@ -234,7 +253,7 @@ class app_rambler extends module {
 		);
 		$i = ceil($deg/45);
 		if($i == 0) $i=1;
-		return $moon[$i];
+		return isset($moon[$i]) ? $moon[$i] : $moon[8];
 	}
 	
 	function getWindDirectionText($text){
@@ -250,7 +269,7 @@ class app_rambler extends module {
 		  "C" => "Штиль",
 		);
 	
-		return $wind[$text];
+		return isset($wind[$text]) ? $wind[$text] : $text;
 	  }
 		
 	function magneticText($num) {
@@ -265,7 +284,7 @@ class app_rambler extends module {
 			"10" => "Информация отсутствует",
 		);
 
-		return $magnetic[$num];
+		return isset($magnetic[$num]) ? $magnetic[$num] : $magnetic[10];
 	}
 	
 	function uvText($num){
@@ -310,7 +329,86 @@ class app_rambler extends module {
 			"thunder" => "Гроза",
 		);
 
-		return $icon[$text];
+		return isset($icon[$text]) ? $icon[$text] : $text;
+	}
+
+	function saveWeatherValue($rec, $cycleupdate = 0, $city_id = '', $city_title = '') {
+		$this->saveWeatherValues(array($rec), $cycleupdate, $city_id, $city_title);
+	}
+
+	function saveWeatherValues($records, $cycleupdate = 0, $city_id = '', $city_title = '') {
+		if (empty($records) || !is_array($records)) {
+			return;
+		}
+
+		$prepared = array();
+		$preparedMap = array();
+		$titlesByCity = array();
+
+		foreach ($records as $rec) {
+			if (empty($rec['TITLE']) || !isset($rec['CITY_ID'])) {
+				continue;
+			}
+			unset($rec['ID']);
+			$cityKey = (string)$rec['CITY_ID'];
+			$titleKey = (string)$rec['TITLE'];
+			$mapKey = $cityKey.'|'.$titleKey;
+			$preparedMap[$mapKey] = $rec;
+			$titlesByCity[$cityKey][$titleKey] = $titleKey;
+		}
+
+		if (empty($preparedMap)) {
+			return;
+		}
+		$prepared = array_values($preparedMap);
+
+		$existing = array();
+		foreach ($titlesByCity as $cityKey => $titles) {
+			$titleSql = array();
+			foreach ($titles as $title) {
+				$titleSql[] = "'".DBSafe($title)."'";
+			}
+			$rows = SQLSelect("SELECT * FROM rambler_weather_value WHERE CITY_ID = '".DBSafe($cityKey)."' AND TITLE IN (".implode(',', $titleSql).") ORDER BY ID");
+			foreach ($rows as $row) {
+				if (empty($row['TITLE'])) {
+					continue;
+				}
+				$mapKey = (string)$row['CITY_ID'].'|'.(string)$row['TITLE'];
+				if (!isset($existing[$mapKey])) {
+					$existing[$mapKey] = $row;
+				}
+			}
+		}
+
+		foreach ($prepared as $rec) {
+			$mapKey = (string)$rec['CITY_ID'].'|'.(string)$rec['TITLE'];
+			$ifExist = isset($existing[$mapKey]) ? $existing[$mapKey] : array();
+
+			if (empty($ifExist['ID'])) {
+				SQLInsert('rambler_weather_value', $rec);
+				continue;
+			}
+
+			$this->setPropByNewValue(
+				isset($ifExist['LINKED_OBJECT']) ? $ifExist['LINKED_OBJECT'] : '',
+				isset($ifExist['LINKED_PROPERTY']) ? $ifExist['LINKED_PROPERTY'] : '',
+				isset($ifExist['LINKED_METHOD']) ? $ifExist['LINKED_METHOD'] : '',
+				isset($rec['VALUE']) ? $rec['VALUE'] : '',
+				isset($ifExist['VALUE']) ? $ifExist['VALUE'] : '',
+				$city_id,
+				$city_title
+			);
+
+			if ($cycleupdate != 0
+				&& empty($ifExist['LINKED_OBJECT'])
+				&& empty($ifExist['LINKED_PROPERTY'])
+				&& empty($ifExist['LINKED_METHOD'])) {
+				continue;
+			}
+
+			$rec['ID'] = $ifExist['ID'];
+			SQLUpdate('rambler_weather_value', $rec);
+		}
 	}
 	
 	function autoLinkProp($url_path, $city_id, $type) {
@@ -319,7 +417,7 @@ class app_rambler extends module {
 		addClass('app_rambler');
 		addClassObject('app_rambler', $url_path_obj);
 		
-		$loadAllProp = SQLSelect("SELECT * FROM rambler_weather_value WHERE CITY_ID = '".$city_id."' AND TITLE LIKE '".$type.".%' AND LINKED_OBJECT = '' AND LINKED_PROPERTY = ''");
+		$loadAllProp = SQLSelect("SELECT * FROM rambler_weather_value WHERE CITY_ID = '".DBSafe($city_id)."' AND TITLE LIKE '".DBSafe($type).".%' AND LINKED_OBJECT = '' AND LINKED_PROPERTY = ''");
 		
 		$obj = getObject($url_path_obj);
 
@@ -331,7 +429,7 @@ class app_rambler extends module {
 			
 			addLinkedProperty($url_path_obj, $exValue[1], $this->name);
 			
-			SQLExec("UPDATE rambler_weather_value SET LINKED_OBJECT = '".$url_path_obj."', LINKED_PROPERTY = '".$exValue[1]."' WHERE CITY_ID = '".$city_id."' AND TITLE = '".$value['TITLE']."'");		
+			SQLExec("UPDATE rambler_weather_value SET LINKED_OBJECT = '".DBSafe($url_path_obj)."', LINKED_PROPERTY = '".DBSafe($exValue[1])."' WHERE CITY_ID = '".DBSafe($city_id)."' AND TITLE = '".DBSafe($value['TITLE'])."'");
 		
 		}
 	}
@@ -339,25 +437,15 @@ class app_rambler extends module {
 	function serverIP($id, $cycleupdate = 0) {
 		$data = $this->callAPI('https://kraken.rambler.ru/userip');
 		$data = trim($data);
+		if ($data === '') {
+			return;
+		}
 		
 		$rec['TITLE'] = 'userip.userip';
 		$rec['VALUE'] = $data;
 		$rec['CITY_ID'] = $id;
 		$rec['UPDATE'] = time();
-		
-		$ifExist = SQLSelectOne("SELECT * FROM rambler_weather_value WHERE TITLE = '".$rec['TITLE']."' AND CITY_ID = '".$rec['CITY_ID']."'");
-		
-		if(!$ifExist) {
-			SQLInsert('rambler_weather_value', $rec);
-		} else {
-			//Обновляем свойства
-			$this->setPropByNewValue($ifExist['LINKED_OBJECT'], $ifExist['LINKED_PROPERTY'], $ifExist['LINKED_METHOD'], $rec['VALUE'], $ifExist['VALUE'], $id);
-			
-			//if($cycleupdate != 0 && empty($ifExist['LINKED_OBJECT']) && empty($ifExist['LINKED_PROPERTY']) && empty($ifExist['LINKED_METHOD'])) return;
-			
-			$rec['ID'] = $ifExist['ID'];
-			SQLUpdate('rambler_weather_value', $rec);
-		}
+		$this->saveWeatherValue($rec, 0, $id);
 	}
 	
 	function loadCurrenciesNow($url_path = '', $cycleupdate = 0) {
@@ -370,103 +458,101 @@ class app_rambler extends module {
 		foreach($getAllCity as $key => $value) {
 			$data = $this->callAPI('https://www.rambler.ru/api/v4/header', $value['GEO_CODE']);
 			$data = json_decode($data, TRUE);
+			$records = array();
 			
 			//Отправим в функцию для получения пробок
 			//$this->loadTraffic($data["traffic"], $value['ID']);
 			
 			if(isset($data["currencies"]) and is_array($data["currencies"])){
 				foreach($data["currencies"] as $keycurrencies => $valuecurrencies) {
-					$rec['TITLE'] = 'currencies.'.$valuecurrencies['code'];
-					$rec['VALUE'] = $valuecurrencies['value'];
-					$rec['CITY_ID'] = $value['ID'];
-					$rec['UPDATE'] = time();
-					
-					$ifExist = SQLSelectOne("SELECT * FROM rambler_weather_value WHERE TITLE = '".$rec['TITLE']."' AND CITY_ID = '".$rec['CITY_ID']."'");
-					if(!$ifExist) {
-						SQLInsert('rambler_weather_value', $rec);
-					} else {
-						//Обновляем свойства
-						$this->setPropByNewValue($ifExist['LINKED_OBJECT'], $ifExist['LINKED_PROPERTY'], $ifExist['LINKED_METHOD'], $rec['VALUE'], $ifExist['VALUE'], $value['ID'], $value['TITLE']);
-							
-						if($cycleupdate != 0 && empty($ifExist['LINKED_OBJECT']) && empty($ifExist['LINKED_PROPERTY']) && empty($ifExist['LINKED_METHOD'])) continue;
-						
-						$rec['ID'] = $ifExist['ID'];
-						SQLUpdate('rambler_weather_value', $rec);
+					if (empty($valuecurrencies['code']) || !isset($valuecurrencies['value'])) continue;
+					$records[] = array(
+						'TITLE' => 'currencies.'.$valuecurrencies['code'],
+						'VALUE' => $valuecurrencies['value'],
+						'CITY_ID' => $value['ID'],
+						'UPDATE' => time()
+					);
+					if (isset($valuecurrencies['delta'])) {
+						$records[] = array(
+							'TITLE' => 'currencies.'.$valuecurrencies['code'].'_delta',
+							'VALUE' => $valuecurrencies['delta'],
+							'CITY_ID' => $value['ID'],
+							'UPDATE' => time()
+						);
+					}
+					if (!empty($valuecurrencies['url'])) {
+						$records[] = array(
+							'TITLE' => 'currencies.'.$valuecurrencies['code'].'_url',
+							'VALUE' => $valuecurrencies['url'],
+							'CITY_ID' => $value['ID'],
+							'UPDATE' => time()
+						);
 					}
 				}
 			}
+			$this->saveWeatherValues($records, $cycleupdate, $value['ID'], $value['TITLE']);
 		}
 		
 	}
 	
 	//Загрузка раз в час
 	function loadDataCycle() {
-		$getUniqCityID = SQLSelect("SELECT DISTINCT CITY_ID FROM rambler_weather_value WHERE LINKED_OBJECT != '' OR LINKED_PROPERTY != '' OR LINKED_METHOD != ''");
+		$getUniqCityID = SQLSelect("
+			SELECT DISTINCT c.ID, c.URL_PATH
+			FROM rambler_weather_city c
+			INNER JOIN rambler_weather_value v ON v.CITY_ID = c.ID
+			WHERE v.LINKED_OBJECT != '' OR v.LINKED_PROPERTY != '' OR v.LINKED_METHOD != ''
+		");
 		
 		foreach($getUniqCityID as $value) {
-			$url_path = SQLSelectOne('SELECT URL_PATH FROM rambler_weather_city WHERE ID = "'.$value["CITY_ID"].'"');
-			$this->loadWeatherNow($url_path['URL_PATH'], 1);
+			if (empty($value['URL_PATH'])) continue;
+			$this->loadWeatherNow($value['URL_PATH'], 1);
 		}
 	}
 	
 	function loadTraffic($data, $id, $cycleupdate = 0) {
 		if(empty($data)) return;
 		
+		$records = array();
 		foreach($data as $key => $value) {
-			$rec['TITLE'] = 'traffic.'.$key;
-			$rec['VALUE'] = $value;
-			$rec['CITY_ID'] = $id;
-			$rec['UPDATE'] = time();
-			
-			$ifExist = SQLSelectOne("SELECT * FROM rambler_weather_value WHERE TITLE = '".$rec['TITLE']."' AND CITY_ID = '".$rec['CITY_ID']."'");
-			if(!$ifExist) {
-				SQLInsert('rambler_weather_value', $rec);
-			} else {
-				//Обновляем свойства
-				$this->setPropByNewValue($ifExist['LINKED_OBJECT'], $ifExist['LINKED_PROPERTY'], $ifExist['LINKED_METHOD'], $rec['VALUE'], $ifExist['VALUE'], $id);
-				
-				if($cycleupdate != 0 && empty($ifExist['LINKED_OBJECT']) && empty($ifExist['LINKED_PROPERTY']) && empty($ifExist['LINKED_METHOD'])) continue;
-				
-				$rec['ID'] = $ifExist['ID'];
-				SQLUpdate('rambler_weather_value', $rec);
-			}
+			$records[] = array(
+				'TITLE' => 'traffic.'.$key,
+				'VALUE' => $value,
+				'CITY_ID' => $id,
+				'UPDATE' => time()
+			);
 		}
+		$this->saveWeatherValues($records, $cycleupdate, $id);
 	}
 	
 	function inday_weather($data, $id, $cycleupdate = 0) {
-		if(empty($data)) return;
+		if(empty($data['table_data']) || !is_array($data['table_data'])) return;
 
 		$arrayKeyInDay = ['00_00', '03_00', '06_00', '09_00', '12_00', '15_00', '18_00', '21_00', '24_00'];
+		$records = array();
 		
 		foreach($data['table_data'] as $key => $value) {
 			unset($value['date']);
 			foreach($value as $key2 => $value2) {
+				if (!is_array($value2)) continue;
 				foreach($value2 as $key3 => $value3) {
-					$rec['TITLE'] = 'inday_weather.'.$key2.'_'.$arrayKeyInDay[$key3];
-					$rec['VALUE'] = $value3;
-					$rec['CITY_ID'] = $id;
-					$rec['UPDATE'] = time();
+					if (!isset($arrayKeyInDay[$key3])) continue;
+					$rec = array(
+						'TITLE' => 'inday_weather.'.$key2.'_'.$arrayKeyInDay[$key3],
+						'VALUE' => $value3,
+						'CITY_ID' => $id,
+						'UPDATE' => time()
+					);
 					
 					if(($key2 == 'temperature' || $key2 == 'temp_feels' || $key2 == 'temp_water' ) && $rec['VALUE'] > 0) {
 						$rec['VALUE'] = '+'.$rec['VALUE'];
 					}
-					
-					$ifExist = SQLSelectOne("SELECT * FROM rambler_weather_value WHERE TITLE = '".$rec['TITLE']."' AND CITY_ID = '".$rec['CITY_ID']."'");
-					if(!$ifExist) {
-						SQLInsert('rambler_weather_value', $rec);
-					} else {
-						//Обновляем свойства
-						$this->setPropByNewValue($ifExist['LINKED_OBJECT'], $ifExist['LINKED_PROPERTY'], $ifExist['LINKED_METHOD'], $rec['VALUE'], $ifExist['VALUE'], $id);
-						
-						if($cycleupdate != 0 && empty($ifExist['LINKED_OBJECT']) && empty($ifExist['LINKED_PROPERTY']) && empty($ifExist['LINKED_METHOD'])) continue;
-						
-						$rec['ID'] = $ifExist['ID'];
-						SQLUpdate('rambler_weather_value', $rec);
-					}
+					$records[] = $rec;
 					
 				}
 			}
 		}
+		$this->saveWeatherValues($records, $cycleupdate, $id);
 	}
 	
 	
@@ -480,58 +566,52 @@ class app_rambler extends module {
 		foreach($getAllCity as $key => $value) {
 			$data = $this->callAPI('https://weather.rambler.ru/api/v3/today/?all_data=0&url_path='.$value['URL_PATH']);
 			$data = json_decode($data, TRUE);
+			if (empty($data['date_weather']) || !is_array($data['date_weather'])) {
+				continue;
+			}
 			
 			//Добавим расчет фазы луны
-			$data["date_weather"]["moon_phase_text"] = $this->moonPhaseText($data["date_weather"]["moon_phase"]);
-			$data["date_weather"]["wind_direction_text"] = $this->getWindDirectionText($data["date_weather"]["wind_direction"]);
-			$data["date_weather"]["geomagnetic_text"] = $this->magneticText($data["date_weather"]["geomagnetic"]);
-			$data["date_weather"]["uv_text"] = $this->uvText($data["date_weather"]["uv"]);
-			$data["date_weather"]["icon_text"] = $this->iconText($data["date_weather"]["icon"]);
-			$data["date_weather"]["roadway_visibility_points"] = $data["date_weather"]["roadway_visibility"]["points"];
-			$data["date_weather"]["roadway_visibility_description"] = $data["date_weather"]["roadway_visibility"]["description"];
-			$data["date_weather"]["sunset"] = date('H:i:s', strtotime($data["date_weather"]["sunset"]));
-			$data["date_weather"]["sunrise"] = date('H:i:s', strtotime($data["date_weather"]["sunrise"]));
-			$daylightsec = $data['date_weather']['daylight'];
+			$data["date_weather"]["moon_phase_text"] = $this->moonPhaseText(isset($data["date_weather"]["moon_phase"]) ? $data["date_weather"]["moon_phase"] : 0);
+			$data["date_weather"]["wind_direction_text"] = $this->getWindDirectionText(isset($data["date_weather"]["wind_direction"]) ? $data["date_weather"]["wind_direction"] : '');
+			$data["date_weather"]["geomagnetic_text"] = $this->magneticText(isset($data["date_weather"]["geomagnetic"]) ? $data["date_weather"]["geomagnetic"] : '');
+			$data["date_weather"]["uv_text"] = $this->uvText(isset($data["date_weather"]["uv"]) ? $data["date_weather"]["uv"] : 11);
+			$data["date_weather"]["icon_text"] = $this->iconText(isset($data["date_weather"]["icon"]) ? $data["date_weather"]["icon"] : '');
+			$data["date_weather"]["roadway_visibility_points"] = isset($data["date_weather"]["roadway_visibility"]["points"]) ? $data["date_weather"]["roadway_visibility"]["points"] : '';
+			$data["date_weather"]["roadway_visibility_description"] = isset($data["date_weather"]["roadway_visibility"]["description"]) ? $data["date_weather"]["roadway_visibility"]["description"] : '';
+			$data["date_weather"]["sunset"] = !empty($data["date_weather"]["sunset"]) ? date('H:i:s', strtotime($data["date_weather"]["sunset"])) : '';
+			$data["date_weather"]["sunrise"] = !empty($data["date_weather"]["sunrise"]) ? date('H:i:s', strtotime($data["date_weather"]["sunrise"])) : '';
+			$daylightsec = isset($data['date_weather']['daylight']) ? (int)$data['date_weather']['daylight'] : 0;
 			$data["date_weather"]["daylight_H_i"] = date_format(new DateTime("@$daylightsec"),'H:i');
 			//добавим название города
-			$data["date_weather"]["name_town"] = $data["town"]["name"];
+			$data["date_weather"]["name_town"] = isset($data["town"]["name"]) ? $data["town"]["name"] : '';
 			
 			
 			
 			unset($data["date_weather"]["alert_text_short"]);
 			unset($data["date_weather"]["date"]);
+			$records = array();
 			
 			foreach($data["date_weather"] as $weatherNowKey => $weatherNowValue) {
 				if(!is_array($weatherNowValue)) {
-					$rec['TITLE'] = 'current_weather.'.$weatherNowKey;
-					$rec['VALUE'] = $weatherNowValue;
-					$rec['CITY_ID'] = $value['ID'];
-					$rec['UPDATE'] = time();
+					$rec = array(
+						'TITLE' => 'current_weather.'.$weatherNowKey,
+						'VALUE' => $weatherNowValue,
+						'CITY_ID' => $value['ID'],
+						'UPDATE' => time()
+					);
 					
 					if(($weatherNowKey == 'temperature' || $weatherNowKey == 'temp_feels' || $weatherNowKey == 'temp_water' ) && $weatherNowValue > 0) {
 						$rec['VALUE'] = '+'.$weatherNowValue;
 					}
+					$records[] = $rec;
 					
-					$ifExist = SQLSelectOne("SELECT * FROM rambler_weather_value WHERE TITLE = '".$rec['TITLE']."' AND CITY_ID = '".$rec['CITY_ID']."'");
-					
-					if(!$ifExist) {
-						SQLInsert('rambler_weather_value', $rec);
-					} else {
-						//Обновляем свойства
-						$this->setPropByNewValue($ifExist['LINKED_OBJECT'], $ifExist['LINKED_PROPERTY'], $ifExist['LINKED_METHOD'], $rec['VALUE'], $ifExist['VALUE'], $value['ID'], $value['TITLE']);
-						
-						if($cycleupdate != 0 && empty($ifExist['LINKED_OBJECT']) && empty($ifExist['LINKED_PROPERTY']) && empty($ifExist['LINKED_METHOD'])) continue;
-						
-						if(!isset($ifExist['GEO_CODE']) or $ifExist['GEO_CODE'] != $data["town"]["geo_id"]) {
-							//Обновим GEO ID он нам понадобится дальше
-							SQLExec("UPDATE rambler_weather_city SET GEO_CODE = '".$data["town"]["geo_id"]."' WHERE ID = '".$value['ID']."'");
-						}
-
-						$rec['ID'] = $ifExist['ID'];
-						SQLUpdate('rambler_weather_value', $rec);					
+					if(isset($data["town"]["geo_id"]) && (!isset($value['GEO_CODE']) || $value['GEO_CODE'] != $data["town"]["geo_id"])) {
+						//Обновим GEO ID он нам понадобится дальше
+						SQLExec("UPDATE rambler_weather_city SET GEO_CODE = '".DBSafe($data["town"]["geo_id"])."' WHERE ID = '".DBSafe($value['ID'])."'");
 					}
 				}
 			} 
+			$this->saveWeatherValues($records, $cycleupdate, $value['ID'], $value['TITLE']);
 			
 			//Валюту выгрузим
 			$this->loadCurrenciesNow($value['URL_PATH'], $cycleupdate);
@@ -556,6 +636,9 @@ class app_rambler extends module {
 		foreach($getAllCity as $keyy => $valuee) {
 			$data = $this->callAPI('https://weather.rambler.ru/api/v3/ndays/?n=10&url_path='.$valuee['URL_PATH']);
 			$data = json_decode($data, TRUE);
+			if (empty($data['range_weather']) || !is_array($data['range_weather'])) {
+				continue;
+			}
 			$id=$valuee['ID'];
 			
 			$arr=array();
@@ -592,8 +675,9 @@ class app_rambler extends module {
 						
 					$arr[] = array('TITLE' => 'forecast.'.$key.'_'.$name, 'VALUE' => $val, 'CITY_ID' => $id, 'UPDATE' => time());
 					}
-					else {
-						foreach ($value['forecast'] as $partOfDay => $value2) {
+					else if ($name == 'forecast') {
+						foreach ($val as $partOfDay => $value2) {
+							if (!is_array($value2)) continue;
 							foreach ($value2 as $valuename => $itogValue) {
 							
 								switch ($valuename) { 
@@ -620,20 +704,7 @@ class app_rambler extends module {
 				
 			}
 					
-			foreach ($arr as $key => $value)	{
-			$ifExist = SQLSelectOne("SELECT * FROM rambler_weather_value WHERE TITLE = '".$value['TITLE']."' AND CITY_ID = '".$value['CITY_ID']."'");
-					
-			if(!is_array ($ifExist)) {
-				SQLInsert('rambler_weather_value', $value);
-				
-			} else {
-				//Обновляем свойства
-				$this->setPropByNewValue($ifExist['LINKED_OBJECT'], $ifExist['LINKED_PROPERTY'], $ifExist['LINKED_METHOD'], $value['VALUE'], $ifExist['VALUE'], isset($value['ID']) ? $value['ID'] : '', $value['TITLE']);
-				$value['ID'] = $ifExist['ID'];		
-				if($cycleupdate != 0 && empty($ifExist['LINKED_OBJECT']) && empty($ifExist['LINKED_PROPERTY']) && empty($ifExist['LINKED_METHOD'])) continue;
-				SQLUpdate('rambler_weather_value', $value);
-				}
-			}
+			$this->saveWeatherValues($arr, $cycleupdate, $id);
 		}
 	}
 
@@ -659,6 +730,9 @@ class app_rambler extends module {
 		foreach($horo as $znak => $znak_rus) {
 			$data = $this->callAPI('https://horoscopes.rambler.ru/api/front/v3/horoscope/general/'.$znak.'/tomorrow/');
 			$data = json_decode($data, TRUE);
+			if (empty($data['content']['text']) || !is_array($data['content']['text'])) {
+				continue;
+			}
 			
 			foreach ($data['content']['text'] as $key => $value) {
 				$arr[] = array('TITLE' => 'goroskop.'.$znak.'_tomorrow', 'VALUE' => $value["content"], 'CITY_ID' => $id, 'UPDATE' => time());
@@ -667,31 +741,21 @@ class app_rambler extends module {
 		foreach($horo as $znak => $znak_rus) {
 			$data = $this->callAPI('https://horoscopes.rambler.ru/api/front/v3/horoscope/general/'.$znak.'/today/');
 			$data = json_decode($data, TRUE);
+			if (empty($data['content']['text']) || !is_array($data['content']['text'])) {
+				continue;
+			}
 			
 			foreach ($data['content']['text'] as $key => $value) {
 				$arr[] = array('TITLE' => 'goroskop.'.$znak.'_today', 'VALUE' => $value["content"], 'CITY_ID' => $id, 'UPDATE' => time());
 			}
 		}
-		foreach ($arr as $key => $value)	{
-			$ifExist = SQLSelectOne("SELECT * FROM rambler_weather_value WHERE TITLE = '".$value['TITLE']."' AND CITY_ID = '".$value['CITY_ID']."'");
-					
-			if(!$ifExist) {
-				SQLInsert('rambler_weather_value', $value);
-				
-			} else {
-				//Обновляем свойства
-				$this->setPropByNewValue($ifExist['LINKED_OBJECT'], $ifExist['LINKED_PROPERTY'], $ifExist['LINKED_METHOD'], $value['VALUE'], $ifExist['VALUE'], isset($value['ID']) ? $value['ID'] : '', $value['TITLE']);
-				$value['ID'] = $ifExist['ID'];		
-				if($cycleupdate != 0 && empty($ifExist['LINKED_OBJECT']) && empty($ifExist['LINKED_PROPERTY']) && empty($ifExist['LINKED_METHOD'])) continue;
-				SQLUpdate('rambler_weather_value', $value);
-			}
-		}
+		$this->saveWeatherValues($arr, $cycleupdate, $id);
 				
 			
 	}
 	
 
-	function setPropByNewValue($object = '', $property = '', $method = '', $newvalue, $oldvalue, $city_id = '', $city_title = '') {
+	function setPropByNewValue($object = '', $property = '', $method = '', $newvalue = '', $oldvalue = '', $city_id = '', $city_title = '') {
 		if(!empty($object) && !empty($property) && ($newvalue != $oldvalue || $newvalue != gg($object.'.'.$property))) {
 			sg($object.'.'.$property, $newvalue);
 		}
@@ -713,6 +777,10 @@ class app_rambler extends module {
 		if($this->ajax == 1 && $request == 'whereiam') {
 			$data = $this->whereiam();
 			$data = json_decode($data, TRUE);
+			if (empty($data['name'])) {
+				echo json_encode(array('items' => array()));
+				die();
+			}
 			
 			$data = $this->callAPI('https://weather.rambler.ru/api/v3/suggest/?query='.urlencode($data['name']).'&count=1');
 			
@@ -731,7 +799,13 @@ class app_rambler extends module {
 
 		if(isset($url_path)) {
 			$city = SQLSelectOne('SELECT * FROM rambler_weather_city WHERE URL_PATH = "'.DBSafe($url_path).'"');
+			if (!$city || !is_array($city) || empty($city['ID'])) {
+				return;
+			}
 			$data = SQLSelectOne('SELECT * FROM rambler_weather_value WHERE CITY_ID = "'.DBSafe($city['ID']).'" AND LINKED_OBJECT != "" AND LINKED_PROPERTY != ""');
+			if (!$data || !is_array($data)) {
+				$data = array();
+			}
 			
 			foreach($city as $key => $value) {
 				$city['CITY_'.$key] = $value;
@@ -785,16 +859,24 @@ class app_rambler extends module {
 	function callAPI($url, $geocode = 0) {
 		$ch = curl_init($url);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+		curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+		curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
+		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+		curl_setopt($ch, CURLOPT_TIMEOUT, 30);
 		
 		if($geocode != 0) {
 			curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-				'Cookie: geoid='.$geocode
+				'Cookie: geoid='.$geocode,
+				'Accept: application/json'
 			));
 			//curl_setopt($ch, CURLOPT_COOKIEFILE, '/var/www/html/cms/cached/rambler.txt');
+		} else {
+			curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+				'Accept: application/json'
+			));
 		}
 		
 		curl_setopt($ch, CURLOPT_ENCODING, 'gzip');
-		curl_setopt($ch, CURLOPT_VERBOSE, true);
 		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 		curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
 		curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
@@ -813,7 +895,7 @@ class app_rambler extends module {
 
 	function DeleteLinkedProperties($city_id = 0) {
 		if($city_id != 0) {
-			$properties = SQLSelect("SELECT * FROM rambler_weather_value WHERE CITY_ID = '".$city_id."' AND LINKED_OBJECT != '' AND LINKED_PROPERTY != ''");
+			$properties = SQLSelect("SELECT * FROM rambler_weather_value WHERE CITY_ID = '".DBSafe($city_id)."' AND LINKED_OBJECT != '' AND LINKED_PROPERTY != ''");
 		} else {
 			$properties = SQLSelect("SELECT * FROM rambler_weather_value WHERE LINKED_OBJECT != '' AND LINKED_PROPERTY != ''");
 		}
@@ -822,6 +904,30 @@ class app_rambler extends module {
 			foreach ($properties as $prop) {
 				removeLinkedProperty($prop['LINKED_OBJECT'], $prop['LINKED_PROPERTY'], $this->name);
 			}
+		}
+	}
+
+	function createIndexIfMissing($table, $indexName, $indexSql) {
+		$exists = SQLSelectOne("SHOW INDEX FROM `".$table."` WHERE Key_name = '".DBSafe($indexName)."'");
+		if (!$exists || !is_array($exists) || empty($exists['Key_name'])) {
+			SQLExec("ALTER TABLE `".$table."` ADD ".$indexSql);
+		}
+	}
+
+	function tableExists($table) {
+		$exists = SQLSelectOne("SHOW TABLES LIKE '".DBSafe($table)."'");
+		return ($exists && is_array($exists));
+	}
+
+	function upgradeSchema() {
+		if ($this->tableExists('rambler_weather_city')) {
+			$this->createIndexIfMissing('rambler_weather_city', 'IDX_URL_PATH', "INDEX `IDX_URL_PATH` (`URL_PATH`)");
+		}
+		if ($this->tableExists('rambler_weather_value')) {
+			SQLExec("ALTER TABLE `rambler_weather_value` MODIFY `VALUE` TEXT");
+			$this->createIndexIfMissing('rambler_weather_value', 'IDX_CITY_TITLE', "INDEX `IDX_CITY_TITLE` (`CITY_ID`, `TITLE`)");
+			$this->createIndexIfMissing('rambler_weather_value', 'IDX_TITLE_CITY', "INDEX `IDX_TITLE_CITY` (`TITLE`, `CITY_ID`)");
+			$this->createIndexIfMissing('rambler_weather_value', 'IDX_LINKED', "INDEX `IDX_LINKED` (`LINKED_OBJECT`, `LINKED_PROPERTY`, `LINKED_METHOD`)");
 		}
 	}
 	
@@ -835,6 +941,7 @@ class app_rambler extends module {
 		subscribeToEvent($this->name, 'MINUTELY');
 		
 		parent::install();
+		$this->upgradeSchema();
 	}
 	
 	function uninstall() {
@@ -855,18 +962,19 @@ class app_rambler extends module {
         rambler_weather_city: TITLE varchar(255) NOT NULL DEFAULT ''
         rambler_weather_city: URL_PATH varchar(255) NOT NULL DEFAULT ''
         rambler_weather_city: GEO_CODE varchar(255) NOT NULL DEFAULT ''
-        rambler_weather_city: ADD varchar(255) NOT NULL DEFAULT ''
+        rambler_weather_city: ADD int(15) unsigned NOT NULL DEFAULT 0
 
 
 		rambler_weather_value: ID int(15) unsigned NOT NULL auto_increment
-        rambler_weather_value: CITY_ID varchar(100) NOT NULL DEFAULT ''
+        rambler_weather_value: CITY_ID int(15) unsigned NOT NULL DEFAULT 0
         rambler_weather_value: TITLE varchar(255) NOT NULL DEFAULT ''
-        rambler_weather_value: VALUE varchar(1024) NOT NULL DEFAULT ''
-        rambler_weather_value: UPDATE varchar(255) NOT NULL DEFAULT ''
+        rambler_weather_value: VALUE text
+        rambler_weather_value: UPDATE int(15) unsigned NOT NULL DEFAULT 0
         rambler_weather_value: LINKED_OBJECT varchar(100) NOT NULL DEFAULT ''
         rambler_weather_value: LINKED_PROPERTY varchar(100) NOT NULL DEFAULT ''
         rambler_weather_value: LINKED_METHOD varchar(100) NOT NULL DEFAULT ''
 EOD;
 		parent::dbInstall($data);
+		$this->upgradeSchema();
    }
 }
