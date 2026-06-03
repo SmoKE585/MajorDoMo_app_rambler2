@@ -921,13 +921,13 @@ class app_rambler extends module {
 
 	function upgradeSchema() {
 		if ($this->tableExists('rambler_weather_city')) {
-			$this->createIndexIfMissing('rambler_weather_city', 'IDX_URL_PATH', "INDEX `IDX_URL_PATH` (`URL_PATH`)");
+			$this->createIndexIfMissing('rambler_weather_city', 'IDX_URL_PATH', "INDEX `IDX_URL_PATH` (`URL_PATH`(191))");
 		}
 		if ($this->tableExists('rambler_weather_value')) {
 			SQLExec("ALTER TABLE `rambler_weather_value` MODIFY `VALUE` TEXT");
-			$this->createIndexIfMissing('rambler_weather_value', 'IDX_CITY_TITLE', "INDEX `IDX_CITY_TITLE` (`CITY_ID`, `TITLE`)");
-			$this->createIndexIfMissing('rambler_weather_value', 'IDX_TITLE_CITY', "INDEX `IDX_TITLE_CITY` (`TITLE`, `CITY_ID`)");
-			$this->createIndexIfMissing('rambler_weather_value', 'IDX_LINKED', "INDEX `IDX_LINKED` (`LINKED_OBJECT`, `LINKED_PROPERTY`, `LINKED_METHOD`)");
+			$this->createIndexIfMissing('rambler_weather_value', 'IDX_CITY_TITLE', "INDEX `IDX_CITY_TITLE` (`CITY_ID`, `TITLE`(191))");
+			$this->createIndexIfMissing('rambler_weather_value', 'IDX_TITLE_CITY', "INDEX `IDX_TITLE_CITY` (`TITLE`(191), `CITY_ID`)");
+			$this->createIndexIfMissing('rambler_weather_value', 'IDX_LINKED', "INDEX `IDX_LINKED` (`LINKED_OBJECT`(80), `LINKED_PROPERTY`(80), `LINKED_METHOD`(80))");
 		}
 	}
 	
